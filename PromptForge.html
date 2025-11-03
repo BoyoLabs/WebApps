@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PromptForge</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  /* Inter font setup */
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+  body { font-family: 'Inter', sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; background: #1f2937; color: #e5e7eb; }
+
+  /* Editor and Mirror Setup - Adjusted for full width */
+  #editor-wrapper {
+    position: relative;
+    flex: 1;
+    width: 100%;
+    overflow: hidden;
+    padding: 1rem; /* Padding for the container */
+  }
+
+  #markdown-input, #mirror {
+    position: absolute;
+    top: 0;
+    left: 1rem; /* Aligning with padding */
+    right: 1rem; /* Aligning with padding */
+    bottom: 0;
+    width: auto; /* Let left/right define width */
+    height: auto; /* Let top/bottom define height */
+    padding: 15px;
+    margin: 0;
+    box-sizing: border-box;
+    font-family: monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    tab-size: 4;
+    transition: background 0.3s, color 0.3s;
+  }
+
+  /* Textarea Specifics */
+  #markdown-input {
+    background: transparent;
+    color: transparent;
+    caret-color: #fca5a5;
+    resize: none;
+    z-index: 10;
+    overflow: auto;
+    border: none;
+  }
+
+  /* Mirror Specifics */
+  #mirror {
+    pointer-events: none;
+    overflow: auto;
+    background: #111827;
+    border: 1px solid #4b5563;
+    border-radius: 8px;
+  }
+
+  /* --- SYNTAX HIGHLIGHTING COLORS --- */
+  .h-syntax { color: #facc15; font-weight: 700; }
+  .bold-syntax { color: #10b981; font-weight: 700; }
+  .italic-syntax { color: #3b82f6; font-style: italic; }
+  .link-syntax { color: #f97316; }
+  .code-syntax { color: #818cf8; background: rgba(55, 65, 81, 0.5); padding: 2px 4px; border-radius: 4px; }
+  .quote-syntax { color: #9ca3af; border-left: 3px solid #6b7280; padding-left: 10px; margin-left: -10px; display: inline-block; width: 100%; }
+  .list-syntax { color: #a78bfa; }
+
+  /* FIX FOR MOBILE FILE INPUT: Ensures the invisible input is a valid touch target */
+  .file-input-wrapper {
+      position: relative;
+      overflow: hidden;
+      display: inline-block;
+  }
+  .file-input-wrapper input[type=file] {
+      /* Make it cover the button but don't set opacity: 0 */
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0.001; /* Extremely low opacity, but not 0 */
+      cursor: pointer;
+      z-index: 20; /* Ensure it's above the button */
+  }
+
+  /* General Layout */
+  .panel { display: flex; flex-direction: column; height: 100%; }
+</style>
+</head>
+<body>
+
+<header class="bg-gray-900 shadow-xl p-3 flex justify-between items-center">
+  <h1 class="text-xl font-bold text-indigo-400">PromptForge - by Boyo Labs</h1>
+  <div class="flex space-x-3 items-center">
+    
+    <!-- Load from PC Button (File Input disguised as a button) -->
+    <div class="file-input-wrapper">
+        <button class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg shadow-md transition duration-200">
+            Load from PC
+        </button>
+        <input type="file" id="load-file-input" accept=".md, .txt">
+    </div>
+
+    <!-- Download Button -->
+    <button id="download-btn" class="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white font-semibold rounded-lg shadow-md transition duration-200">
+        Download as .md
+    </button>
+    
+  </div>
+</header>
+
+<div id="editor-container" class="flex flex-1 p-0">
+  <!-- Markdown Input Panel (Full Width) -->
+  <div class="panel w-full">
+    <label class="bg-gray-700 text-white p-2 text-center font-bold">Your Markdown Text (IDE Style)</label>
+    <div id="editor-wrapper">
+      <div id="mirror"></div>
+      <textarea id="markdown-input" spellcheck="false" placeholder="Start typing your Markdown here..."></textarea>
+    </div>
+  </div>
+</div>
+
+<script>
+const markdownInput = document.getElementById('markdown-input');
+const mirror = document.getElementById('mirror');
+const downloadBtn = document.getElementById('download-btn');
+const loadFileInput = document.getElementById('load-file-input');
+
+const initialContent =
+`# Welcome to PromptForge!
+
+---
+
+This is a focused environment for editing **Markdown** with live syntax highlighting, designed for prompt engineering and dataset creation.
+
+## Core Features
+
+* **Precision Tool:** The IDE-style highlighting helps you structure prompts and datasets with perfect consistency.
+* **Load from PC:** Click 'Load from PC' to select a local **.md** or **.txt** file.
+* **Download as .md:** Click 'Download as .md' to save your work to your computer.
+
+### Markdown Syntax Examples
+
+* **Headers:** \`# Main Title\`
+* **List:** \`* Item 1\`
+* **Emphasis:** \*\*Bold\*\* or \*Italic\*
+* **Link:** \`[Google](https://www.google.com)\`
+* **Code Block (Crucial for prompts!):**
+\`\`\`yaml
+role: "analyst"
+task: "summarize"
+output_format: "json"
+\`\`\`
+`;
+
+// --- Utility: Simple Message Box (Replacing alert()) ---
+function showMessage(message, isError = false) {
+    let msgBox = document.getElementById('message-box');
+    if (!msgBox) {
+        msgBox = document.createElement('div');
+        msgBox.id = 'message-box';
+        msgBox.className = 'fixed top-4 right-4 p-4 rounded-lg shadow-2xl z-50 transition-opacity duration-300 opacity-0';
+        document.body.appendChild(msgBox);
+    }
+    
+    msgBox.textContent = message;
+    msgBox.className = isError 
+        ? 'fixed top-4 right-4 p-4 rounded-lg shadow-2xl z-50 transition-opacity duration-300 bg-red-600 text-white opacity-100'
+        : 'fixed top-4 right-4 p-4 rounded-lg shadow-2xl z-50 transition-opacity duration-300 bg-indigo-600 text-white opacity-100';
+    
+    // Fade out and remove after 3 seconds
+    setTimeout(() => {
+        msgBox.classList.remove('opacity-100');
+        msgBox.classList.add('opacity-0');
+    }, 3000);
+}
+
+
+// --- 1. Syntax Highlighting Logic ---
+function updateSyntaxHighlighting(text) {
+    // 1. Sanitize HTML
+    let highlightedText = text.replace(/&/g, "&amp;")
+                              .replace(/</g, "&lt;")
+                              .replace(/>/g, "&gt;");
+
+    // 2. Syntax replacements
+    
+    // Headers (Must be first to avoid conflicts with other inline rules)
+    highlightedText = highlightedText.replace(/^(#+)(.*)$/gm, (match, p1, p2) => 
+        `<span class="h-syntax">${p1}</span>${p2}`
+    );
+
+    // Bold (**text**)
+    highlightedText = highlightedText.replace(/(\*\*)([^\*]+)\1/g, 
+        `<span class="bold-syntax">**$2**</span>`
+    );
+
+    // Italic (*text* or _text_)
+    highlightedText = highlightedText.replace(/([^\*]|^)(\*)([^\*]+)\2([^\*]|$)/g, 
+        `$1<span class="italic-syntax">*${'$3'}*</span>$4`
+    ).replace(/([^_]|^)(_)([^_]+)\2([^_]|$)/g, 
+        `$1<span class="italic-syntax">_${'$3'}_</span>$4`
+    );
+
+    // Links/Images (Must handle the full [text](url) structure)
+    highlightedText = highlightedText.replace(/(\!?)\[(.*?)\]\((.*?)\)/g, 
+        `<span class="link-syntax">$1[$2]($3)</span>`
+    );
+
+    // Code blocks (Must be before inline code)
+    highlightedText = highlightedText.replace(/(`{3}[\s\S]*?`{3})/g, 
+        `<span class="code-syntax">$1</span>`
+    );
+
+    // Inline code (`text`)
+    highlightedText = highlightedText.replace(/`([^`]+)`/g, 
+        `<span class="code-syntax">\`$1\`</span>`
+    );
+
+    // Blockquotes (> text)
+    highlightedText = highlightedText.replace(/^(>.*)$/gm, 
+        `<span class="quote-syntax">$1</span>`
+    );
+
+    // Lists (* item, - item, 1. item)
+    highlightedText = highlightedText.replace(/^((\s*[-*+]|\s*\d+\.)\s.*)$/gm, 
+        `<span class="list-syntax">$1</span>`
+    );
+    
+    // Preserve line breaks for the mirror div
+    highlightedText = highlightedText.replace(/\n/g, '<br>');
+
+    // Set the mirror content
+    mirror.innerHTML = highlightedText;
+}
+
+
+// --- 2. PC File Handling Logic ---
+
+/**
+ * Handles loading a file from the user's PC.
+ * @param {Event} event 
+ */
+function handleFileLoad(event) {
+    const file = event.target.files[0];
+    if (!file) {
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        markdownInput.value = e.target.result;
+        markdownInput.dispatchEvent(new Event('input')); // Trigger update
+        showMessage(`File loaded: ${file.name}`);
+    };
+    reader.onerror = () => {
+        showMessage(`Error reading file: ${file.name}`, true);
+        console.error("File Read Error:", reader.error);
+    };
+    reader.readAsText(file);
+    // Clear the file input value so that the same file can be loaded again
+    event.target.value = ''; 
+}
+
+/**
+ * Handles downloading the current editor content as a Markdown file.
+ */
+function handleFileDownload() {
+    const content = markdownInput.value;
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    
+    // Create a temporary link element for the download
+    const a = document.createElement('a');
+    
+    // The link must be attached to the body before clicking it
+    document.body.appendChild(a); 
+    
+    a.href = url;
+    a.download = 'promptforge-document.md'; // Updated default file name
+    a.click();
+    
+    // Clean up: Remove the link and revoke the object URL
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    showMessage('File downloaded successfully!');
+}
+
+
+// --- Initialization and Event Handlers ---
+
+// Unified update function
+function handleInput() {
+    const text = markdownInput.value;
+    updateSyntaxHighlighting(text);
+}
+
+// Ensure mirror scrolls with the textarea
+markdownInput.addEventListener('scroll', () => {
+    mirror.scrollTop = markdownInput.scrollTop;
+    mirror.scrollLeft = markdownInput.scrollLeft;
+});
+
+// Main input handler
+markdownInput.addEventListener('input', handleInput);
+
+// Button Handlers
+downloadBtn.addEventListener('click', handleFileDownload);
+loadFileInput.addEventListener('change', handleFileLoad);
+
+
+// Load initial content
+markdownInput.value = initialContent;
+
+
+// Initial render
+window.onload = handleInput; 
+
+</script>
+
+</body>
+</html>
